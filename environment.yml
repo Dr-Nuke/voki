@@ -73,7 +73,6 @@ dependencies:
   - pycparser=2.20=pyh9f0ad1d_2
   - pygments=2.10.0=pyhd8ed1ab_0
   - pyopenssl=21.0.0=pyhd8ed1ab_0
-  - pyparsing=3.0.3=pyhd8ed1ab_0
   - pyrsistent=0.18.0=py39h2bbff1b_0
   - pysocks=1.7.1=py39haa95532_0
   - python=3.9.7=h7840368_3_cpython
@@ -106,4 +105,34 @@ dependencies:
   - wincertstore=0.2=py39haa95532_2
   - winpty=0.4.3=4
   - zipp=3.6.0=pyhd8ed1ab_0
-prefix: C:\ProgramData\Anaconda3\envs\voki
+  - pip:
+    - ci-info==0.2.0
+    - click==8.0.3
+    - configobj==5.0.6
+    - configparser==5.2.0
+    - cycler==0.11.0
+    - etelemetry==0.2.2
+    - filelock==3.4.2
+    - fitz==0.0.1.dev2
+    - fonttools==4.28.5
+    - future==0.18.2
+    - httplib2==0.20.2
+    - isodate==0.6.1
+    - kiwisolver==1.3.2
+    - lxml==4.7.1
+    - matplotlib==3.5.1
+    - networkx==2.6.3
+    - nibabel==3.2.1
+    - nipype==1.7.0
+    - opencv-python==4.5.5.62
+    - pathlib==1.0.1
+    - pillow==8.4.0
+    - prov==2.0.0
+    - pydot==1.4.2
+    - pymupdf==1.19.3
+    - pyparsing==3.0.6
+    - pyxnat==1.4
+    - rdflib==6.1.1
+    - scipy==1.7.3
+    - simplejson==3.17.6
+    - traits==6.3.2
