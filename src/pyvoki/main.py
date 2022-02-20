@@ -28,7 +28,9 @@ class VokiTrainer:
         self.DB_PATH = db_fpath / 'db.csv'
 
         # brush up the incoming dataframe, and save it as the db variable
-        df['hash'] = df['text'].astype(str).apply(lambda x: md5(x.encode('utf-8')).hexdigest())
+        hash_base = df[['text','text_g','text_s']].apply(lambda row: '_'.join(row.values.astype(str)), axis=1)
+        df['hash'] = hash_base.astype(str).apply(lambda x: md5(x.encode('utf-8')).hexdigest())
+        df.drop_duplicates(subset=['hash'])
         df['attempts'] = [[] for _ in range(len(df))]
         df.set_index('hash', drop=True, inplace=True)
         df = df.sort_values(by=['book', 'page', 'y_max'])
@@ -39,6 +41,7 @@ class VokiTrainer:
             self.box = VokiBox(n=n_levels,
                                max_cards=max_box_cards,
                                fpath=db_fpath / 'box.pk')
+            self.box.fill(self.get_next_box_cards())
         else:
             self.box = voki_box
             self.update(voki_box)
@@ -50,6 +53,29 @@ class VokiTrainer:
 
     def __repr__(self):
         return f'Voki Trainer with {len(self.db)} entries in db'
+
+    def get_next_box_cards(self):
+        """
+        Given the current voki box fill status, and the db, identify those cards that go noxt into the box
+        """
+        df = self.db[self.db['attempts'].apply(len)<self.box.n_levels]
+        n_missing_cards = self.box.max_cards - self.box.n_cards()
+        return list(df.index[:n_missing_cards])
+
+
+    def attempt(self):
+        """
+        looks for a good card, in the voki box or not, attempts it, and accordingly updates the db
+        """
+
+    def show_box(self):
+        strlist = []
+        for i, lvl in self.box.levels.items():
+            strlist.append(f'level {i}')
+            for hash_ in lvl:
+                strlist.append(f"    {self.db.loc[hash_,'text_g']}")
+        print('\n'.join(strlist))
+
 
     @staticmethod
     def load(path: Path):
@@ -80,7 +106,7 @@ class VokiTrainer:
         """
         pass
 
-    def drop_by_hash(self,hash_):
+    def drop_by_hash(self, hash_):
         """
         given a hash, removes the according card if it is within the box
         :param hash_:
@@ -90,7 +116,6 @@ class VokiTrainer:
             for card in lvl:
                 if card.hash == hahs_:
                     self.levels[i]
-
 
 
 class Card:
@@ -139,16 +164,16 @@ def card_id(card):
 class VokiBox:
     def __init__(self, n=6, max_cards=20, fpath='box.pk'):  # box_db,voki_db
 
-        self.levels = {i: [] for i in range(1, n + 1)}
-        self.max_cards = max_cards
         self.n_levels = n
+        self.initiate()
+        self.max_cards = max_cards
         self.fpath = fpath
 
-    def onboard_card(self, card, level=1):
-        my_assert(card, Card, 'card')
+    def onboard_card(self, hash_, level=1):
+        my_assert(hash_, str, 'hash')
         my_assert(level, int, 'level')
 
-        if level > self.n_levels:
+        if (level > self.n_levels) or (level < 1):
             logger.warning(f'this vokibox has only levels 1-{self.n_levels} but not level {level}')
             return False
 
@@ -156,11 +181,19 @@ class VokiBox:
             logger.warning(f'cannot onboard card "{card.text}" there are already {self.n_cards()} cards in this box.')
             return False
 
-        if self.check_card_already_in_box(card):
+        if self.check_card_already_in_box(hash_):
             return False
 
-        self.levels[level].append(card)
+        self.levels[level].append(hash_)
         return True
+
+    def fill(self,hashes):
+        """
+        fills the box with the next appropriate
+        """
+        for hash_ in hashes:
+            self.onboard_card(hash_)
+        pass
 
     def get_all_cards(self):
         return list(chain.from_iterable(self.levels.values()))
@@ -196,8 +229,8 @@ class VokiBox:
         strlist = []
         for i, lvl in self.levels.items():
             strlist.append(f'level {i}')
-            for card in lvl:
-                strlist.append(f'    {card.text}')
+            for hash_ in lvl:
+                strlist.append(f'    {hash_}')
 
         return '\n'.join(strlist)
 
@@ -211,12 +244,16 @@ class VokiBox:
         with open(fpath, 'rb') as fh:
             return pickle.load(fh)
 
-    def check_card_already_in_box(self, card):
+    def check_card_already_in_box(self, hash_):
         for i, lvl in self.levels.items():
-            if card.hash in [c.hash for c in lvl]:
-                logger.warning(f'Card {card} is already in this box at level {i}')
+            if hash_ in lvl:
+                logger.warning(f'Card {Card(card)} is already in this box at level {i}')
                 return True
         return False
+
+    def initiate(self):
+        self.levels = {i: [] for i in range(1, self.n_levels+1)}
+
 
 
 def box_db_load(box_db_file):
