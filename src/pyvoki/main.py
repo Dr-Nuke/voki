@@ -112,7 +112,7 @@ class VokiTrainer:
         incorporaes changes of an attempt into the db
         """
         my_assert(attempt_result, Attempt, 'attempt_result')
-        hash_=attempt_result.
+
 
 
     def show_box(self):
