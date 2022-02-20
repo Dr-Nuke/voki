@@ -45,6 +45,9 @@ def test_trainer_class(trainer):
     assert isinstance(trainer.box, vo.VokiBox)
     assert trainer.box.n_cards() == MAX_BOX_CARDS
 
+def test_attempt(trainer):
+    trainer.attempt
+
 
 # @pytest.fixture
 # def trainer_loaded(trainer,cards):

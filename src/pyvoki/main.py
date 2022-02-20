@@ -4,6 +4,8 @@ import sys
 from hashlib import md5
 from itertools import chain
 from pathlib import Path
+from typing import List, Dict
+
 
 import numpy as np
 import pandas as pd
@@ -28,12 +30,15 @@ class VokiTrainer:
         self.DB_PATH = db_fpath / 'db.csv'
 
         # brush up the incoming dataframe, and save it as the db variable
-        hash_base = df[['text','text_g','text_s']].apply(lambda row: '_'.join(row.values.astype(str)), axis=1)
+        hash_base = df[['text', 'text_g', 'text_s']].apply(lambda row: '_'.join(row.values.astype(str)), axis=1)
         df['hash'] = hash_base.astype(str).apply(lambda x: md5(x.encode('utf-8')).hexdigest())
         df.drop_duplicates(subset=['hash'])
         df['attempts'] = [[] for _ in range(len(df))]
         df.set_index('hash', drop=True, inplace=True)
         df = df.sort_values(by=['book', 'page', 'y_max'])
+        df['streak'] = 0
+        df['last_attempt_time']
+        df['last_successful_attempt_time']
         self.db = df
         self.fpath = db_fpath
 
@@ -58,24 +63,65 @@ class VokiTrainer:
         """
         Given the current voki box fill status, and the db, identify those cards that go noxt into the box
         """
-        df = self.db[self.db['attempts'].apply(len)<self.box.n_levels]
+        df = self.db[self.db['attempts'].apply(len) < self.box.n_levels]
         n_missing_cards = self.box.max_cards - self.box.n_cards()
         return list(df.index[:n_missing_cards])
 
+    def attempt_card_in_level(self, lvl: int):
+        # attempt the next card in vokibox level lvl
+        if lvl not in self.box:
+            logger.warning(f'You cannot attempt level {lvl} as there are only levels {list(self.box.keys())}')
+            return False
+        if len(self.levels[lvl]) == 0:
+            logger.warning(f'vokibox lvl {lvl} is empty. you need to fill it first')
+            return False
 
-    def attempt(self):
+        top_card = self.levels[lvl].pop(0)
+        card_attempt = self.attempt_card(top_card)
+
+        # update vokibox
+
+
+    def attempt_card(self, card):
         """
-        looks for a good card, in the voki box or not, attempts it, and accordingly updates the db
+        attempt a individual card
+        :param card:
+        :return:
         """
+        now = datetime.datetime.now().replace(microsecond=0)
+        guess = input(f'{card["german_phrase"]}')
+        result = self.check_attempt(card, guess)  # true/False
+        solution = slef.db.loc[card, 'text']
+
+        attempt_result = Attempt(now, guess, result, solution)
+        self.update(Attempt)
+
+        return attempt_result
+
+    def check_attempt(card, guess):
+        if guess == card['french_phrase']:
+            print('correct!')
+            return True
+        text = input(f'type "yes" if you think they match:\n {guess} \n {card["french_phrase"]}\n')
+        if text == 'yes':
+            return True
+        return False
+
+    def update(self, attempt_result: Attempt, hash_: str):
+        """
+        incorporaes changes of an attempt into the db
+        """
+        my_assert(attempt_result, Attempt, 'attempt_result')
+        hash_=attempt_result.
+
 
     def show_box(self):
         strlist = []
         for i, lvl in self.box.levels.items():
             strlist.append(f'level {i}')
             for hash_ in lvl:
-                strlist.append(f"    {self.db.loc[hash_,'text_g']}")
+                strlist.append(f"    {self.db.loc[hash_, 'text_g']}")
         print('\n'.join(strlist))
-
 
     @staticmethod
     def load(path: Path):
@@ -89,22 +135,6 @@ class VokiTrainer:
     def save(self):
         self.DB_PATH.parent.mkdir(parents=True, exist_ok=False)
         self.db.to_csv(self.DB_PATH)
-
-    def update_entry_by_card(self, card):
-        """
-        updates a card with incoming card
-        :param card:
-        :return:
-        """
-        pass
-
-    def update(self, voki_box):
-        """
-        incorporaes changes of a voki box into the db
-        :param voki_box:
-        :return:
-        """
-        pass
 
     def drop_by_hash(self, hash_):
         """
@@ -135,12 +165,10 @@ class Card:
 
 
 class Attempt:
-    def __init__(self, date, answer, success, solution):
+    def __init__(self, date, answer, success):
         my_assert(date, datetime.datetime, 'date')
         my_assert(answer, str, 'answer')
         my_assert(success, bool, 'success')
-        my_assert(solution, str, 'solution')
-        self.solution = solution
         self.date = date.replace(microsecond=0)
         self.answer = answer
         self.success = success
@@ -187,9 +215,9 @@ class VokiBox:
         self.levels[level].append(hash_)
         return True
 
-    def fill(self,hashes):
+    def fill(self, hashes):
         """
-        fills the box with the next appropriate
+        fills the box with the next appropriate hashes
         """
         for hash_ in hashes:
             self.onboard_card(hash_)
@@ -197,24 +225,6 @@ class VokiBox:
 
     def get_all_cards(self):
         return list(chain.from_iterable(self.levels.values()))
-
-    def attempt_card_in_level(self, lvl, df):
-        # attempt the next card in vokibox level i
-        if len(self.levels) <= lvl:
-            logger.warning(f'You cannot attempt level {lvl} as there are only levels 0-{len(self.levels) - 1}')
-            return False
-        if len(self.levels[lvl]) == 0:
-            logger.warning(f'vokibox lvl {lvl} is empty. you need to fill it first')
-            return False
-
-        top_card_id = self.levels[lvl].pop(0)
-
-        card, result = attempt(top_card_id, df)
-
-        if result:
-            self.advance(card, lvl)
-        else:
-            self.onboard_card(top_card_id)
 
     def advance(self, card, lvl):
         if lvl < len(self.levels) - 1:
@@ -252,8 +262,7 @@ class VokiBox:
         return False
 
     def initiate(self):
-        self.levels = {i: [] for i in range(1, self.n_levels+1)}
-
+        self.levels = {i: [] for i in range(1, self.n_levels + 1)}
 
 
 def box_db_load(box_db_file):
@@ -274,32 +283,6 @@ def card_from_id(ids, df):
         print(f'ids {ids} not existing in df')
 
     return return_cards.iloc[0].to_dict()
-
-
-def attempt(id_, df):
-    card = card_from_id(id_, df)
-    now = datetime.datetime.now().replace(microsecond=0)
-    guess = input(f'{card["german_phrase"]}')
-    result = check_attempt(card, guess)  # true/False
-
-    card['attempt_history'] = card['attempt_history'].append(pd.DataFrame({'time': [now],
-                                                                           'result': [result],
-                                                                           'answer': [guess]}))
-    if result:
-        card['streak'] += 1
-    else:
-        card['streak'] = np.floor(card['streak'] / 2)
-    return card, result
-
-
-def check_attempt(card, guess):
-    if guess == card['french_phrase']:
-        print('correct!')
-        return True
-    text = input(f'type "yes" if you think they match:\n {guess} \n {card["french_phrase"]}\n')
-    if text == 'yes':
-        return True
-    return False
 
 
 def main():
