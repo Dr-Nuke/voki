@@ -4,7 +4,7 @@ import sys
 from hashlib import md5
 from itertools import chain
 from pathlib import Path
-from typing import List, Dict
+from typing import List
 
 import numpy as np
 import pandas as pd
@@ -18,7 +18,13 @@ logger.add(sys.stdout,
 
 
 class VokiTrainer:
-    def __init__(self, df: pd.DataFrame, db_fpath, load=False, n_levels=6, max_box_cards=20, voki_box=None):
+    def __init__(self,
+                 df: pd.DataFrame,
+                 db_fpath,
+                 load=False,
+                 n_levels=6,
+                 max_box_cards=20,
+                 voki_box=None):
         """
         initializes a new database off a Dataframe, as well as a associated vokibox
         :param df: data for the database as pd.DataFrame
@@ -37,11 +43,13 @@ class VokiTrainer:
         df = df.sort_values(by=['book', 'page', 'y_max'])
         strcols = ['text', 'text_g', 'text_s']
         for col in strcols:
-            df[col]=df[col].astype(str)
+            df[col] = df[col].astype(str)
 
-        df['streak'] = 0
+        df['streak'] = 0  # how often did you consecutively guess corectly?
         df['last_attempt_time'] = np.nan
         df['last_successful_attempt_time'] = np.nan
+        df['passed_vokibox'] = False  # indicates that a card passed the vokibox and is now free-float
+
         self.db = df
         self.fpath = db_fpath
 
@@ -51,8 +59,8 @@ class VokiTrainer:
                                fpath=db_fpath / 'box.pk')
             self.box.fill(self.get_next_box_cards())
         else:
+            my_assert(voki_box, VokiBox, 'voki_box')
             self.box = voki_box
-            self.update(voki_box)
 
         if not load:
             assert isinstance(db_fpath, Path), f'db_fpath must be pathlib Path, not {type(db_fpath)}'
@@ -79,10 +87,12 @@ class VokiTrainer:
             logger.warning(f'vokibox lvl {lvl} is empty. you need to fill it first')
             return False
 
-        top_card = self.box.levels[lvl].pop(0)
-        card_attempt = self.attempt_card(top_card)
-
-        # update vokibox
+        top_card = self.box.levels[lvl][0]
+        attempt_result = self.attempt_card(top_card)
+        _, passed_box = self.box.update_box(top_card, attempt_result.success)
+        if passed_box:
+            # todo: fill this
+            pass
 
     def attempt_card(self, card):
         """
@@ -93,31 +103,37 @@ class VokiTrainer:
         row = self.db.loc[card]
         now = datetime.datetime.now().replace(microsecond=0)
         guess = input(f"{row['text_g']}")
-        result = self.check_attempt(card, guess)  # true/False
-        solution = row['text']
 
-        attempt_result = Attempt(now, guess, result)
-        self.update(attempt_result, card)
+        attempt_result = Attempt(now, guess, self.check_attempt(row, guess))
+        self.update_db(attempt_result, card)
 
         return attempt_result
 
-    def check_attempt(self, card, guess):
-        if guess == card['text_g']:
+    def check_attempt(self, row, guess):
+        if guess == row['text']:
             print('correct!')
             return True
-        text = input(f'type "yes" if you think they match:\n {guess} \n {card["french_phrase"]}\n')
-        if text == 'yes':
-            return True
+        # Todo: add more logic like levenstein comparison, manual override, etc
         return False
 
-    def update(self, attempt_result: "Attempt", card: str):
+    def update_db(self, attempt_result: "Attempt", card: str):
         """
         incorporaes changes of an attempt into the db
         """
         my_assert(attempt_result, Attempt, 'attempt_result')
+        self.db.at[card, 'attempts'].append(attempt_result)
+        self.db.at[card, 'last_attempt_time'] = attempt_result.date
+        if attempt_result.success:
+            self.db.at[card, 'last_successful_attempt_time'] = attempt_result.date
+            self.db.at[card, 'streak'] += 1
+        else:
+            self.db.at[card, 'streak'] = 0
+        return True
 
     def show_box(self):
         strlist = []
+        strlist.append(f'Voki Box with {self.box.n_cards()}/{self.box.max_cards} cards')
+
         for i, lvl in self.box.levels.items():
             strlist.append(f'level {i}')
             for hash_ in lvl:
@@ -179,15 +195,11 @@ class Attempt:
             success_str = 'Successful'
         else:
             success_str = 'Failed'
-        return f'{success_str} attempt at {self.date} on "{self.solution}": "{self.answer}"'
+        return f'{success_str} attempt at {self.date}: "{self.answer}"'
 
 
 def my_assert(obj, type_, obj_name):
     assert isinstance(obj, type_), f'{obj_name} must be {type_}, but is {type(obj)}: {obj}'
-
-
-def card_id(card):
-    return card['id'][0]
 
 
 class VokiBox:
@@ -197,6 +209,30 @@ class VokiBox:
         self.initiate()
         self.max_cards = max_cards
         self.fpath = fpath
+
+    def update_box(self, card: str, success: bool):
+        """
+        updates the voki box accordingly
+        returns (bool,bool) = (True, "card passed last level")
+        """
+        my_assert(card, str, 'card')
+        my_assert(success, bool, 'attempt')
+
+        old_lvl = self.get_key_of_card(card)
+        self.levels[old_lvl].remove(card)
+        if success:  # move card up or release
+            if old_lvl + 1 in self.levels:
+                self.levels[old_lvl + 1].append(card)
+                return True, False
+            else:
+                return True, True
+        else:  # back to start
+            self.levels[1].append(card)
+            return True, False
+
+    def get_key_of_card(self, card):
+        reverse_lookup = {k: v for v, l in self.levels.items() for k in l}
+        return reverse_lookup.get(card)
 
     def onboard_card(self, hash_, level=1):
         my_assert(hash_, str, 'hash')
@@ -216,13 +252,17 @@ class VokiBox:
         self.levels[level].append(hash_)
         return True
 
-    def fill(self, hashes):
+    def fill(self, hashes: List[str], levels: List = None):
         """
-        fills the box with the next appropriate hashes
+        fills the box with the povided hashes
         """
+        my_assert(hashes, list, 'hashes')
+        assert all([isinstance(x, str) for x in
+                    hashes]), f'only strings allowed in list "hashes", got {[type(h) for h in hashes]}'
+
         for hash_ in hashes:
             self.onboard_card(hash_)
-        pass
+
 
     def get_all_cards(self):
         return list(chain.from_iterable(self.levels.values()))
@@ -258,7 +298,7 @@ class VokiBox:
     def check_card_already_in_box(self, hash_):
         for i, lvl in self.levels.items():
             if hash_ in lvl:
-                logger.warning(f'Card {Card(card)} is already in this box at level {i}')
+                logger.warning(f'Card {hash_} is already in this box at level {i}')
                 return True
         return False
 
