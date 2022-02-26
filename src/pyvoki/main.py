@@ -6,7 +6,6 @@ from itertools import chain
 from pathlib import Path
 from typing import List, Dict
 
-
 import numpy as np
 import pandas as pd
 from loguru import logger
@@ -36,9 +35,13 @@ class VokiTrainer:
         df['attempts'] = [[] for _ in range(len(df))]
         df.set_index('hash', drop=True, inplace=True)
         df = df.sort_values(by=['book', 'page', 'y_max'])
+        strcols = ['text', 'text_g', 'text_s']
+        for col in strcols:
+            df[col]=df[col].astype(str)
+
         df['streak'] = 0
-        df['last_attempt_time']
-        df['last_successful_attempt_time']
+        df['last_attempt_time'] = np.nan
+        df['last_successful_attempt_time'] = np.nan
         self.db = df
         self.fpath = db_fpath
 
@@ -67,20 +70,19 @@ class VokiTrainer:
         n_missing_cards = self.box.max_cards - self.box.n_cards()
         return list(df.index[:n_missing_cards])
 
-    def attempt_card_in_level(self, lvl: int):
+    def attempt_card_in_level(self, lvl: int = 1):
         # attempt the next card in vokibox level lvl
-        if lvl not in self.box:
+        if lvl not in self.box.levels:
             logger.warning(f'You cannot attempt level {lvl} as there are only levels {list(self.box.keys())}')
             return False
-        if len(self.levels[lvl]) == 0:
+        if len(self.box.levels[lvl]) == 0:
             logger.warning(f'vokibox lvl {lvl} is empty. you need to fill it first')
             return False
 
-        top_card = self.levels[lvl].pop(0)
+        top_card = self.box.levels[lvl].pop(0)
         card_attempt = self.attempt_card(top_card)
 
         # update vokibox
-
 
     def attempt_card(self, card):
         """
@@ -88,18 +90,19 @@ class VokiTrainer:
         :param card:
         :return:
         """
+        row = self.db.loc[card]
         now = datetime.datetime.now().replace(microsecond=0)
-        guess = input(f'{card["german_phrase"]}')
+        guess = input(f"{row['text_g']}")
         result = self.check_attempt(card, guess)  # true/False
-        solution = slef.db.loc[card, 'text']
+        solution = row['text']
 
-        attempt_result = Attempt(now, guess, result, solution)
-        self.update(Attempt)
+        attempt_result = Attempt(now, guess, result)
+        self.update(attempt_result, card)
 
         return attempt_result
 
-    def check_attempt(card, guess):
-        if guess == card['french_phrase']:
+    def check_attempt(self, card, guess):
+        if guess == card['text_g']:
             print('correct!')
             return True
         text = input(f'type "yes" if you think they match:\n {guess} \n {card["french_phrase"]}\n')
@@ -107,13 +110,11 @@ class VokiTrainer:
             return True
         return False
 
-    def update(self, attempt_result: Attempt, hash_: str):
+    def update(self, attempt_result: "Attempt", card: str):
         """
         incorporaes changes of an attempt into the db
         """
         my_assert(attempt_result, Attempt, 'attempt_result')
-
-
 
     def show_box(self):
         strlist = []

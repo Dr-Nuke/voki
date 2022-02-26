@@ -46,7 +46,7 @@ def test_trainer_class(trainer):
     assert trainer.box.n_cards() == MAX_BOX_CARDS
 
 def test_attempt(trainer):
-    trainer.attempt
+    trainer.attempt_card_in_level(lvl=1)
 
 
 # @pytest.fixture
