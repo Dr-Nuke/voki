@@ -1,5 +1,6 @@
 import datetime
 import os
+import random
 import shutil
 from io import StringIO
 from pathlib import Path
@@ -7,8 +8,9 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
-import pyvoki as vo
 from loguru import logger
+
+import pyvoki as vo
 
 np.random.seed(123)
 
@@ -59,6 +61,55 @@ def trainer_empty_box():
                           max_box_cards=MAX_BOX_CARDS,
                           voki_box=vo.VokiBox(n=N_LEVELS,
                                               max_cards=MAX_BOX_CARDS))
+
+
+def test_drop_by_hash(trainer_empty_box,caplog):
+    hashes = list(trainer_empty_box.db.sample(MAX_BOX_CARDS).index)
+    levels = [random.randint(1, N_LEVELS) for _ in range(MAX_BOX_CARDS)]
+    for h, lvl in zip(hashes, levels):
+        trainer_empty_box.box.onboard_card(h, level=lvl)
+    assert trainer_empty_box.box.n_cards() == MAX_BOX_CARDS
+
+    # test positive:
+    for h in hashes:
+        result = trainer_empty_box.box.drop_by_hash(h)
+        assert result
+
+    # test negative:
+    assert 'is not present in voibox' not in caplog.text
+    result = trainer_empty_box.box.drop_by_hash(hashes[0])
+    assert not result
+    assert 'is not present in voibox' in caplog.text
+
+
+    print('')
+
+
+def test_save_and_load(trainer_empty_box):
+    level = 2
+    hash_ = trainer_empty_box.db.iloc[0].name
+    trainer_empty_box.box.onboard_card(hash_, level=level)
+    root = trainer_empty_box.ROOT
+
+    trainer_empty_box.save()
+    trainer_empty_box.save()
+    trainer_loaded = vo.VokiTrainer.load(root)
+    assert all(trainer_empty_box.db.columns == trainer_loaded.db.columns)
+
+
+def test_fromvokibox_to_freefloat(trainer_empty_box, monkeypatch):
+    level = N_LEVELS
+    hash_ = trainer_empty_box.db.iloc[0].name
+    solution = trainer_empty_box.db.loc[hash_]['text']
+    input_output = StringIO(f'{solution}\n')
+    monkeypatch.setattr('sys.stdin', input_output)
+
+    assert len(trainer_empty_box.box.levels[level]) == 0
+    assert not trainer_empty_box.db.loc[hash_, 'passed_vokibox']
+    trainer_empty_box.box.onboard_card(hash_, level=level)
+    trainer_empty_box.attempt_card_in_level(lvl=level)
+    assert hash_ not in trainer_empty_box.box.levels[level]
+    assert trainer_empty_box.db.loc[hash_, 'passed_vokibox']
 
 
 def test_trainer_class(trainer):
@@ -126,6 +177,7 @@ def test_onboard_card_bad_level(trainer_empty_box, level, caplog):
 
 
 def test_onboard_card_already_onboarded(trainer_empty_box, caplog):
+    # tests that a card cannot be onboarded twice into the same vokibox
     level = 1
     hash_ = trainer_empty_box.db.iloc[0].name
     assert len(trainer_empty_box.box.levels[level]) == 0
