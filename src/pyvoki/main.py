@@ -97,8 +97,8 @@ class VokiTrainer:
         # remove those that currently are in the vokibox
         fresh_cards = fresh_cards[~fresh_cards.index.isin(self.box.get_all_cards())]
 
-        next_cards = pd.concat([shortlisted, fresh_cards]).drop_duplicates()
-
+        next_cards = pd.concat([shortlisted, fresh_cards])
+        next_cards = next_cards[~next_cards.index.duplicated()]
         n_next_cards = self.box.max_cards - self.box.n_cards()
         return list(next_cards.index[:n_next_cards])
 
