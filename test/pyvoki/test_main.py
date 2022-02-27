@@ -63,7 +63,19 @@ def trainer_empty_box():
                                               max_cards=MAX_BOX_CARDS))
 
 
-def test_drop_by_hash(trainer_empty_box,caplog):
+def test_do_vokibox(trainer, monkeypatch):
+    # fist get the cards in the vokibox, and their solutions
+    level = 1
+    hashes = trainer.box.levels[level]
+    solutions = trainer.db.loc[hashes]['text'].values
+    mock_inputs = iter([s for s in solutions])
+    monkeypatch.setattr('builtins.input', lambda msg: next(mock_inputs))
+    trainer.do_vokibox()
+    for hash_ in hashes:
+        assert hash_ in trainer.box.levels[level + 1]
+
+
+def test_drop_by_hash(trainer_empty_box, caplog):
     hashes = list(trainer_empty_box.db.sample(MAX_BOX_CARDS).index)
     levels = [random.randint(1, N_LEVELS) for _ in range(MAX_BOX_CARDS)]
     for h, lvl in zip(hashes, levels):
@@ -81,11 +93,10 @@ def test_drop_by_hash(trainer_empty_box,caplog):
     assert not result
     assert 'is not present in voibox' in caplog.text
 
-
     print('')
 
 
-def test_save_and_load(trainer_empty_box):
+def test_save_and_load(trainer_empty_box, monkeypatch):
     level = 2
     hash_ = trainer_empty_box.db.iloc[0].name
     trainer_empty_box.box.onboard_card(hash_, level=level)

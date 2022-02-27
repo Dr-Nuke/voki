@@ -29,7 +29,7 @@ class VokiTrainer:
                  max_box_cards=20,
                  voki_box=None):
         """
-        initializes a new database off a Dataframe, as well as a associated vokibox
+        initializes a new database off a Dataframe, as well as an associated vokibox
         :param df: data for the database as pd.DataFrame
         :param db_fpath: filepath for db file on disk
         :param load: if True, immediate save is skipped
@@ -72,6 +72,7 @@ class VokiTrainer:
         df['last_attempt_time'] = np.nan
         df['last_successful_attempt_time'] = np.nan
         df['passed_vokibox'] = False  # indicates that a card passed the vokibox and is now free-float
+        df['box_shortlisted'] = np.nan  # indicates that a hash is shortlisted for being added to the vokibox
         return df
 
     @staticmethod
@@ -85,9 +86,37 @@ class VokiTrainer:
         """
         Given the current voki box fill status, and the db, identify those cards that go noxt into the box
         """
-        df = self.db[self.db['attempts'].apply(len) < self.box.n_levels]
-        n_missing_cards = self.box.max_cards - self.box.n_cards()
-        return list(df.index[:n_missing_cards])
+        df = self.db
+
+        # get shortlisted cards
+        shortlisted = df[~df['box_shortlisted'].isna()].sort_values(by='box_shortlisted')
+
+        # get cards that did not yet pass the vokibox
+        fresh_cards = df[df['attempts'].apply(len) < self.box.n_levels]
+
+        # remove those that currently are in the vokibox
+        fresh_cards = fresh_cards[~fresh_cards.index.isin(self.box.get_all_cards())]
+
+        next_cards = pd.concat([shortlisted, fresh_cards]).drop_duplicates()
+
+        n_next_cards = self.box.max_cards - self.box.n_cards()
+        return list(next_cards.index[:n_next_cards])
+
+    def do_vokibox(self):
+        """
+        Do one series of all cards in the vokibox
+        """
+        # first fill up the vokibox
+        if self.box.n_cards() < self.box.max_cards:
+            self.box.fill(self.get_next_box_cards())
+
+        # then see how many attempts we need to do per level
+        attepts_per_level = self.box.get_cards_per_level()
+
+        # then go through the levels from top to bottom and do all cards
+        for level in sorted(attepts_per_level, reverse=True):
+            for _ in range(attepts_per_level[level]):
+                self.attempt_card_in_level(lvl=level)
 
     def attempt_card_in_level(self, lvl: int = 1):
         # attempt the next card in vokibox level lvl
@@ -101,6 +130,8 @@ class VokiTrainer:
         # pick the card at the top of the according level and attempt it
         top_card = self.box.levels[lvl][0]
         attempt_result = self.attempt_card(top_card)
+        if not attempt_result:
+            return False  # the exit scenario
 
         _, passed_box = self.box.update_box(top_card, attempt_result.success)
         self.update_db(attempt_result, top_card, passed_box)
@@ -114,7 +145,9 @@ class VokiTrainer:
         """
         row = self.db.loc[card]
         now = datetime.datetime.now().replace(microsecond=0)
-        guess = input(f"{row['text_g']}")
+        guess = input(f'"{row["text_g"]}": ')
+        if guess == 'exit':
+            return False
         return Attempt(now, guess, self.check_attempt(row, guess))
 
     @staticmethod
@@ -123,7 +156,8 @@ class VokiTrainer:
             print('correct!')
             return True
         else:
-            print(f'wrong. => {row["text"]}')
+            guessstring = guess.strip("\n")
+            print(f'"{guessstring}" != "{row["text"]}"')
         # Todo: add more logic like levenstein comparison, manual override, etc
         return False
 
@@ -141,6 +175,8 @@ class VokiTrainer:
             self.db.at[card, 'streak'] = 0
         if passed_box:
             self.db.loc[card, 'passed_vokibox'] = True
+
+        self.save()
         return True
 
     def show_box(self):
@@ -189,8 +225,8 @@ class Attempt:
         my_assert(answer, str, 'answer')
         my_assert(success, bool, 'success')
         self.date = date.replace(microsecond=0)
-        self.answer = answer
         self.success = success
+        self.answer = answer
 
     def __repr__(self):
         if self.success:
@@ -282,6 +318,9 @@ class VokiBox:
     def get_all_cards(self):
         return list(chain.from_iterable(self.levels.values()))
 
+    def get_cards_per_level(self):
+        return {k: len(v) for k, v in self.levels.items()}
+
     def advance(self, card, lvl):
         if lvl < len(self.levels) - 1:
             self.levels[lvl + 1].append(card['id'])
@@ -318,14 +357,52 @@ class VokiBox:
         return False
 
 
+def initial_query():
+    intent = ''
+    query_string = ['What you want to do?',
+                    '1: Initialize new Trainer',
+                    '2: Load existing Trainer',
+                    '3: Quit']
+    intent = input('\n'.join(query_string))
+    if intent not in ['1', '2', '3']:
+        print(f'"{intent}" is not a valid option.')
+        return initial_query()
 
-def main():
+    return int(intent)
+
+
+def voki_query(trainer):
+    next_ = input('1: next voki; else: exit')
+    if next_ == '1':
+        print('blubb')
+
+
+def main(trainer_path):
     """
-    mycomment
+    a state macheine-like program
     :return:
     """
-    pass
+    trainer = VokiTrainer.load(trainer_path)
+
+    while True:
+        voki_query(trainer)
+
+
+def junk():
+    print('Weclome to VokiTrainer program!')
+    intent = initial_query()
+
+    if intent == 1:
+        input('what ')
+    elif intent == 2:
+        print('blubb')
+
+    elif intent == 3:
+        print('thank you and goodbye')
+    else:
+        print('Illegal call. exiting.')
 
 
 if __name__ == "__main__":
-    main()
+    path = None
+    main(path)
