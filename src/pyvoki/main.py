@@ -1,4 +1,6 @@
+import argparse
 import datetime
+import json
 import pickle
 import sys
 from hashlib import md5
@@ -8,6 +10,7 @@ from typing import List
 
 import numpy as np
 import pandas as pd
+from Levenshtein import distance
 from loguru import logger
 
 logger.add(sys.stdout,
@@ -18,8 +21,8 @@ logger.add(sys.stdout,
 
 
 class VokiTrainer:
-    DB_FILE = 'db.csv'
     PICKLE_FILE = 'trainer.pk'
+    SORTCOLS = ['book', 'page', 'y_max']
 
     def __init__(self,
                  df: pd.DataFrame,
@@ -35,7 +38,6 @@ class VokiTrainer:
         :param load: if True, immediate save is skipped
         """
         self.ROOT = db_fpath
-        self.DB_PATH = db_fpath / VokiTrainer.DB_FILE
         self.PICKLE_PATH = db_fpath / VokiTrainer.PICKLE_FILE
 
         if not load:
@@ -46,7 +48,7 @@ class VokiTrainer:
         if voki_box is None:
             self.box = VokiBox(n=n_levels,
                                max_cards=max_box_cards,
-                               fpath=db_fpath / 'box.pk')
+                               )
             self.box.fill(self.get_next_box_cards())
         else:
             my_assert(voki_box, VokiBox, 'voki_box')
@@ -64,7 +66,8 @@ class VokiTrainer:
         df.drop_duplicates(subset=['hash'])
         df['attempts'] = [[] for _ in range(len(df))]
         df = self.set_hash_as_index(df)
-        df = df.sort_values(by=['book', 'page', 'y_max'])
+        df['book'] = df.file.apply(lambda x: int(x[-5]))
+        df = df.sort_values(by=VokiTrainer.SORTCOLS)
         strcols = ['text', 'text_g', 'text_s']
         for col in strcols:
             df[col] = df[col].astype(str)
@@ -107,6 +110,7 @@ class VokiTrainer:
         Do one series of all cards in the vokibox
         """
         # first fill up the vokibox
+        self.box.onboad_queued_cards()
         if self.box.n_cards() < self.box.max_cards:
             self.box.fill(self.get_next_box_cards())
 
@@ -146,19 +150,24 @@ class VokiTrainer:
         row = self.db.loc[card]
         now = datetime.datetime.now().replace(microsecond=0)
         guess = input(f'"{row["text_g"]}": ')
-        if guess == 'exit':
-            return False
         return Attempt(now, guess, self.check_attempt(row, guess))
 
     @staticmethod
     def check_attempt(row, guess):
         if guess == row['text']:
-            print('correct!')
+            print('\x1b[0;33;40m' + 'correct!' + '\x1b[0m')
+
             return True
-        else:
-            guessstring = guess.strip("\n")
-            print(f'"{guessstring}" != "{row["text"]}"')
-        # Todo: add more logic like levenstein comparison, manual override, etc
+
+        guessstring = guess.strip("\n")
+        if distance(guess, row['text']) <= 1:
+            pick = input('\x1b[0;32;40m' +
+                         f'"{guessstring}" =~ "{row["text"]}". honestly, did you know that? (y/n)' +
+                         '\x1b[0m')
+            if pick == "y":
+                return True
+
+        print('\x1b[0;35;40m' + f'"{guessstring}" != "{row["text"]}"' + '\x1b[0m')
         return False
 
     def update_db(self, attempt_result: "Attempt", card: str, passed_box: bool):
@@ -193,30 +202,54 @@ class VokiTrainer:
         loads a saved database
         """
         assert isinstance(trainer_dir, Path)
-        assert (trainer_dir / cls.DB_FILE).is_file(), f'no db file found in {trainer_dir} '
         assert (trainer_dir / cls.PICKLE_FILE).is_file(), f'no trainer file found in {trainer_dir} '
 
         fname = trainer_dir / cls.PICKLE_FILE
         with open(fname, 'rb') as fh:
-            params = pickle.load(fh)
+            trainer = pickle.load(fh)
 
-        box = params['box']
-        df = pd.read_csv(trainer_dir / cls.DB_FILE)
-        df = VokiTrainer.set_hash_as_index(df)
-
-        return VokiTrainer(df, trainer_dir, load=True, voki_box=box)
+        return trainer
 
     def save(self):
-        attrs = [attr for attr in dir(self) if
-                 not callable(getattr(self, attr)) and
-                 not attr.startswith("__") and
-                 attr != 'db']
-        members = {a: getattr(self, a) for a in attrs}
-
-        self.DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+        self.PICKLE_PATH.parent.mkdir(parents=True, exist_ok=True)
         with open(self.PICKLE_PATH, 'wb') as fh:
-            pickle.dump(members, fh)
-        self.db.to_csv(self.DB_PATH)
+            pickle.dump(self, fh)
+
+    def onboard_db_updates(self, df):
+        """
+        updates the current db according to the incoming db
+        """
+
+        # merge in new dataframe
+        dfs_incoming_words = []
+
+        changecols = ['text', 'text_g', 'text_s']
+        for i, row in df.iterrows():
+            ind = (self.db['y_max'] == row['y_max']) & (self.db['page'] == row['page']) & (
+                    self.db['file'] == row['file'])
+            if any(ind):  # change existing word
+                for col in changecols:
+                    self.db.loc[ind, col] = row[col]
+            else:  # build DF of new words
+                dfs_incoming_words.append(row.to_frame().T)
+
+        if len(dfs_incoming_words) > 0:
+            df_new_words = self.upgrade_initial_df(pd.concat(dfs_incoming_words))
+            self.db = pd.concat([self.db, df_new_words])
+
+        # remove "empty" lines
+        self.db = self.db[self.db['text'] != '']
+
+        # sort
+        self.db.sort_values(by=VokiTrainer.SORTCOLS, inplace=True)
+
+        # remove
+        drops = [self.box.drop_by_hash(card) for card in self.box.get_all_cards() if not card in self.db.index]
+        assert all(drops), f"something wen wrong with removing cards from the vokibox: {drops}"
+
+        logger.info('updated db')
+        self.save()
+        return True
 
 
 class Attempt:
@@ -225,8 +258,8 @@ class Attempt:
         my_assert(answer, str, 'answer')
         my_assert(success, bool, 'success')
         self.date = date.replace(microsecond=0)
-        self.success = success
         self.answer = answer
+        self.success = success
 
     def __repr__(self):
         if self.success:
@@ -235,22 +268,32 @@ class Attempt:
             success_str = 'Failed'
         return f'{success_str} attempt at {self.date}: "{self.answer}"'
 
+    @classmethod
+    def from_dict(cls, d):
+        j = json.loads(d)
+        return Attempt(datetime.datetime.strptime(j['date'], '%Y-%m-%d %H:%M:%S'),
+                       j['answer'],
+                       j['success'])
+
+    def to_json(self):
+        return json.dumps(self.__dict__, default=str)
+
 
 def my_assert(obj, type_, obj_name):
     assert isinstance(obj, type_), f'{obj_name} must be {type_}, but is {type(obj)}: {obj}'
 
 
 class VokiBox:
-    def __init__(self, n=6, max_cards=20, fpath='box.pk'):  # box_db,voki_db
+    def __init__(self, n=6, max_cards=20):  # box_db,voki_db
 
         self.n_levels = n
         self.levels = {i: [] for i in range(1, self.n_levels + 1)}
         self.max_cards = max_cards
-        self.fpath = fpath
+        self.queue = []
 
     def update_box(self, card: str, success: bool):
         """
-        updates the voki box accordingly
+        updates the voki box according to the success of an attempt
         returns (bool,bool) = (True, "card passed last level")
         """
         my_assert(card, str, 'card')
@@ -271,6 +314,11 @@ class VokiBox:
     def get_key_of_card(self, card):
         reverse_lookup = {k: v for v, l in self.levels.items() for k in l}
         return reverse_lookup.get(card)
+
+    def onboad_queued_cards(self):
+        while (self.n_cards() < self.max_cards) and len(self.queue) > 0:
+            card = self.queue.pop()
+            self.onboard_card(card['hash'], card['level'])
 
     def drop_by_hash(self, hash_):
         """
@@ -310,7 +358,7 @@ class VokiBox:
         my_assert(hashes, list, 'hashes')
         assert all([isinstance(x, str) for x in
                     hashes]), f'only strings allowed in list "hashes", got {[type(h) for h in hashes]}'
-        if levels is None:
+        if levels is None:  # by default fill new cards in lvl 1
             levels = [1] * len(hashes)
         for hash_, level in zip(hashes, levels):
             self.onboard_card(hash_, level=level)
@@ -338,11 +386,6 @@ class VokiBox:
                 strlist.append(f'    {hash_}')
 
         return '\n'.join(strlist)
-
-    def save(self):
-
-        with open(self.fpath, 'wb') as fh:
-            pickle.dump(self, fh)
 
     @staticmethod
     def load(fpath):
@@ -403,6 +446,24 @@ def junk():
         print('Illegal call. exiting.')
 
 
+def check_trainer_path_input(db_path):
+    if not db_path.is_dir():
+        raise FileNotFoundError(f'provided path does not exist: {db_path}')
+    logger.info(f'using {db_path} to load Trainer')
+
+
 if __name__ == "__main__":
-    path = None
-    main(path)
+    """
+    the main file considered to be run for a batch of voki trainings
+    """
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("trainer_path", help='specify the trainer path (dir, not file)', type=str)
+    args = parser.parse_args()
+    cwd = Path.cwd()
+    db_path = cwd / args.trainer_path
+    check_trainer_path_input(db_path)
+    trainer = VokiTrainer.load(db_path)
+    trainer.do_vokibox()
+
+    # main(path)

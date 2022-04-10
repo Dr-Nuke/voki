@@ -1,7 +1,0 @@
-french_phrase,french_sentences,french_comments,german_phrase,german_sentences,created,attempt_history,id,streak
-partout,"['Dans la rue du Sentier, la mode est partout.']",[],überall,[],2021-10-31 13:48:03,"Empty DataFrame
-Columns: [time, result, answer]
-Index: []",463857425755945451,0
-la rue,['Julien habite dans la rue Daguerre.'],[],Strasse,[],2021-10-31 13:48:04,"Empty DataFrame
-Columns: [time, result, answer]
-Index: []",5116320665103601376,0

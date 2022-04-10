@@ -32,7 +32,7 @@ def caplog(caplog):
 @pytest.fixture
 def trainer():
     root = Path(os.getcwd())
-    db_raw_fpath = root / 'data/voki_export_full_db.csv'
+    db_raw_fpath = root / 'data/voki_export_azure.csv'
     db_raw = pd.read_csv(db_raw_fpath, sep=';')
     db_raw['book'] = db_raw['file'].str.slice(start=31, stop=32).astype(int)
     db_raw.head(1)
@@ -48,7 +48,7 @@ def trainer():
 @pytest.fixture
 def trainer_empty_box():
     root = Path(os.getcwd())
-    db_raw_fpath = root / 'data/voki_export_full_db.csv'
+    db_raw_fpath = root / 'data/voki_export_azure.csv'
     db_raw = pd.read_csv(db_raw_fpath, sep=';')
     db_raw['book'] = db_raw['file'].str.slice(start=31, stop=32).astype(int)
     db_raw.head(1)
